@@ -35,13 +35,14 @@
     </section>
 
     <!--setting dialog-->
-    <el-dialog title="设置信息" :visible.sync="dialogVisible" s>
-      <el-form :inline="true" label-position="left" label-width="80">
-        <el-form-item label="host">
+    <el-dialog title="设置信息" :visible.sync="dialogVisible">
+      <el-form :model="clientConfig" ref="clientConfig" :inline="true" label-position="left" label-width="80"
+               :rules="rules">
+        <el-form-item label="host" prop="host">
           <el-input v-model="clientConfig.host"></el-input>
         </el-form-item>
-        <el-form-item label="port">
-          <el-input v-model="clientConfig.region"></el-input>
+        <el-form-item label="port" prop="port">
+          <el-input v-model.number="clientConfig.port"></el-input>
         </el-form-item>
       </el-form>
       <span slot="footer" class="dialog-footer">
@@ -80,7 +81,8 @@
 </template>
 
 <script>
-  var mqtt = require('mqtt');
+  const mqtt = require('mqtt');
+  const conf = require('../assets/config')
   import loading from './loading.vue'
   export default {
     name: 'hello',
@@ -89,12 +91,18 @@
     },
     data() {
       return {
+        config: {
+          host: '',
+          port: ''
+        },
+        //连接实例
+        client:{},
         title: "设备启动中",
         logType: '',
         dialogVisible: false,
         listDialog: {
           list: [
-            {name: 'testTopic'}, {name: 'testTopic'},
+
           ],
           show: false,
           addName: ''
@@ -106,57 +114,91 @@
         logData: {
           list: [],
           logType: ''
-
+        },
+        //form rules
+        rules: {
+          host: [{required: true}],
+          port: [{required: true}, {type: "number"}]
         }
       }
 
     },
     created() {
-//      this.initClient();
+      this.initClient();
 
 
     },
     methods: {
-      initClient(){
-        var client = mqtt.connect("ws://test.mosquitto.org"); // you add a ws:// url here
-        client.subscribe("mqtt/demo");
-
-        client.on('connect', function () {
-          //订阅presence主题
-          client.subscribe('presence');
-          //向presence主题发布消息
-          client.publish('presence', 'Hello mqtt');
+      //表单验证结果
+      submitForm(forName){
+        this.$refs[forName].validate((value) => {
+          if (value) {
+            return true
+          } else {
+            return false
+          }
         });
-        client.on('message', function (topic, message) {
-          //收到的消息是一个Buffer
-          console.log(message.toString());
-          client.end();
+      },
+      initClient(){
+        // 连接 MQTT Broker
+        const client = mqtt.connect(conf.host, conf)
+        this.client = client;
+        // 连接 MQTT 成功 HOOK
+        client.on('connect', () => {
+          console.log('connected')
+          this.$message({
+            type:"success",
+            message:"MQTT已连接"
+          })
+          this.title="设备已上线"
+          this.subscribeTopic('t-uconf/id/+/#',0)
+          this.subscribeTopic('t-udata/id/+/#',0)
+
+        })
+        // 触发重连 MQTT HOOK
+        client.on('reconnect', () => {
+          console.log('reconnect')
+          this.$message({
+            type:'warning',
+            message:'正在重新连接'
+          })
+          this.title="重连中"
+        })
+        client.on('packetsend',(packet)=>{
+            console.log(packet)
+        });
+        client.on('packetreceive',(packet)=>{
+          console.log(packet)
+        });
+
+        // 收到 消息 HOOK
+        client.on('message', (topic, message) => {
+          console.log(topic, message.toString())
+        })
+
+        // 发生错误 HOOK
+        client.on('error', () => {
+          this.$message.error("连接服务器失败")
+          console.log("error occurred");
         });
 
       },
-      /**
-       * 订阅主题
-       */
-      subscribeTopic(type, name){
-        let topic = ''
-        if (type === 'auto') {
-          topic = name;
-        } else {
-          topic = this.listDialog.addName;
-          this.listDialog.addName = '';
-        }
-        if (true) {
-          this.listDialog.list.push({name: topic});
-          this.$message({
-            message: "订阅成功",
-            type: "success"
-          })
-        } else {
-          this.$message({
-            message: "订阅失败",
-            type: "error"
-          })
-        }
+
+
+      subscribeTopic(topic,qos){
+        qos?qos:0;
+        this.client.subscribe(topic,qos,(err,granted)=>{
+          if (err) {
+            this.$message({
+              message: "订阅失败",
+              type: "error"
+            })
+          } else {
+            this.listDialog.list.push({name: topic});
+          }
+
+        })
+
 
       },
       unSubscribeTopic(type, topicName){
